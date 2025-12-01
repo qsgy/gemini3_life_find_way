@@ -9,7 +9,7 @@ export const generateTurnCommentary = async (
 ): Promise<AICommentaryResult> => {
   
   // 模拟网络延迟，让体验更真实
-  await new Promise(resolve => setTimeout(resolve, 800));
+  await new Promise(resolve => setTimeout(resolve, 600));
 
   let possibleLines: string[] = [];
 
@@ -49,6 +49,14 @@ export const generateTurnCommentary = async (
   return { text, groundingChunks: groundingChunks.slice(0, 2) };
 };
 
+// 预加载语音列表，解决 Chrome 中 getVoices 首次为空的问题
+let cachedVoices: SpeechSynthesisVoice[] = [];
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+  window.speechSynthesis.onvoiceschanged = () => {
+    cachedVoices = window.speechSynthesis.getVoices();
+  };
+}
+
 // 本地语音合成（替代 API TTS）
 export const speakText = (text: string) => {
   if (!window.speechSynthesis) {
@@ -60,15 +68,34 @@ export const speakText = (text: string) => {
   window.speechSynthesis.cancel();
 
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'zh-CN'; // 设置中文
-  utterance.rate = 1.1; // 稍微快一点
+  utterance.rate = 1.1; // 语速稍快
   utterance.pitch = 1.0;
+  utterance.volume = 1.0;
 
-  // 尝试选择一个中文语音包
-  const voices = window.speechSynthesis.getVoices();
-  const zhVoice = voices.find(v => v.lang.includes('zh') || v.lang.includes('CN'));
-  if (zhVoice) {
-    utterance.voice = zhVoice;
+  // 确保语音列表已加载
+  if (cachedVoices.length === 0) {
+    cachedVoices = window.speechSynthesis.getVoices();
+  }
+
+  // 智能选择最佳中文语音
+  // 优先级: Google 普通话 > Microsoft Xiaoxiao > 任何包含 'zh' 或 'CN' 的语音
+  const zhVoices = cachedVoices.filter(v => v.lang.includes('zh') || v.lang.includes('CN'));
+  
+  let bestVoice = zhVoices.find(v => v.name.includes('Google') && v.name.includes('Putonghua')); // Chrome 优质语音
+  if (!bestVoice) {
+    bestVoice = zhVoices.find(v => v.name.includes('Microsoft')); // Edge 优质语音
+  }
+  if (!bestVoice) {
+    bestVoice = zhVoices[0]; // 默认中文
+  }
+
+  if (bestVoice) {
+    utterance.voice = bestVoice;
+    // 有些浏览器 voice.lang 可能不规范，强制设置一下
+    utterance.lang = bestVoice.lang; 
+  } else {
+    // 如果实在没找到中文语音包，回退到通用设置
+    utterance.lang = 'zh-CN';
   }
 
   window.speechSynthesis.speak(utterance);
@@ -76,6 +103,6 @@ export const speakText = (text: string) => {
 
 // 获取随机建议（替代 Live API）
 export const getCounselorAdvice = async (): Promise<string> => {
-  await new Promise(resolve => setTimeout(resolve, 500));
+  await new Promise(resolve => setTimeout(resolve, 300));
   return ADVICE_DB[Math.floor(Math.random() * ADVICE_DB.length)];
 };

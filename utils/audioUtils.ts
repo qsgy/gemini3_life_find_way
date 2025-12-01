@@ -1,4 +1,8 @@
-import { Blob } from '@google/genai';
+
+export interface AudioBlob {
+  data: string;
+  mimeType: string;
+}
 
 export function decodeBase64(base64: string): Uint8Array {
   const binaryString = atob(base64);
@@ -39,7 +43,7 @@ export function encodeAudioPCM(bytes: Uint8Array) {
   return btoa(binary);
 }
 
-export function createPCMBlob(data: Float32Array): Blob {
+export function createPCMBlob(data: Float32Array): AudioBlob {
   const l = data.length;
   const int16 = new Int16Array(l);
   for (let i = 0; i < l; i++) {
