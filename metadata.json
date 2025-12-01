@@ -1,7 +1,5 @@
 {
   "name": "大学生模拟器 2025",
-  "description": "一款基于回合制的大学生生活模拟卡牌游戏。在50个回合中平衡财富、人脉、成就、精力及情绪。具有AI实时解说、搜索支持的建议及实时语音辅导功能。",
-  "requestFramePermissions": [
-    "microphone"
-  ]
+  "description": "一款基于回合制的大学生生活模拟卡牌游戏。在50个回合中平衡财富、人脉、成就、精力及情绪。",
+  "requestFramePermissions": []
 }

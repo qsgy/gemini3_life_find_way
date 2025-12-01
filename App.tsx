@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { CardData, PlayerStats, GameState, GroundingChunk } from './types';
+import { CardData, PlayerStats, GroundingChunk, AppSettings } from './types';
 import { INITIAL_STATS, CARDS, MAX_TURNS, CARDS_TO_DRAW, CARDS_TO_PLAY } from './constants';
-import { generateTurnCommentary, generateSpeech, connectLiveSession } from './services/geminiService';
-import { decodeBase64, decodeAudioData, playAudioBuffer } from './utils/audioUtils';
+import { generateTurnCommentary, speakText, getCounselorAdvice } from './services/geminiService';
 
 const App: React.FC = () => {
   // --- Game State ---
@@ -13,19 +12,19 @@ const App: React.FC = () => {
   const [history, setHistory] = useState<string[]>([]);
   const [isGameOver, setIsGameOver] = useState(false);
 
-  // --- AI & UI State ---
-  const [commentary, setCommentary] = useState<string>("欢迎来到大学！选择3个活动开始你的新学期。");
+  // --- Settings State ---
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<AppSettings>({
+    autoPlayTTS: false,
+    soundEffects: true,
+  });
+
+  // --- Commentary & UI State ---
+  const [commentary, setCommentary] = useState<string>("欢迎来到大学！我是你的AI辅导员。请选择3个活动开始你的新学期。");
   const [groundingChunks, setGroundingChunks] = useState<GroundingChunk[]>([]);
   const [isLoadingCommentary, setIsLoadingCommentary] = useState(false);
-  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-
-  // --- Live Session State ---
-  const [isLiveOpen, setIsLiveOpen] = useState(false);
-  const [isLiveConnected, setIsLiveConnected] = useState(false);
-  const liveSessionRef = useRef<any>(null);
-  const outputAudioContextRef = useRef<AudioContext | null>(null);
-  const nextStartTimeRef = useRef<number>(0);
-  const liveAudioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const [isAdviceOpen, setIsAdviceOpen] = useState(false);
+  const [adviceText, setAdviceText] = useState("");
 
   // --- Refs ---
   const cardsContainerRef = useRef<HTMLDivElement>(null);
@@ -35,11 +34,19 @@ const App: React.FC = () => {
     drawCards();
   }, [turn]);
 
+  // Auto-play TTS effect
+  useEffect(() => {
+    if (settings.autoPlayTTS && commentary && !isLoadingCommentary && turn > 1) {
+       speakText(commentary);
+    }
+  }, [commentary, isLoadingCommentary, turn, settings.autoPlayTTS]);
+
   const drawCards = () => {
     if (turn > MAX_TURNS) {
       setIsGameOver(true);
       return;
     }
+    // 简单的权重随机或完全随机
     const shuffled = [...CARDS].sort(() => 0.5 - Math.random());
     setHand(shuffled.slice(0, CARDS_TO_DRAW));
     setSelectedCardIds([]);
@@ -70,104 +77,33 @@ const App: React.FC = () => {
     setStats(newStats);
     setHistory(prev => [...prev, `第 ${turn} 周: ${playedCards.map(c => c.title).join(', ')}`]);
 
-    // AI Commentary
+    // Generate Commentary (Local)
     setIsLoadingCommentary(true);
-    setCommentary("AI 辅导员正在分析你的选择...");
+    // setCommentary("辅导员正在观察你..."); // 移除这个中间状态，减少闪烁感
     setGroundingChunks([]);
     
     try {
       const result = await generateTurnCommentary(playedCards, newStats, turn);
       setCommentary(result.text);
       setGroundingChunks(result.groundingChunks || []);
-      
-      // Auto-play TTS if desired, or just cache. For now, we wait for user to click Listen.
     } catch (error) {
       console.error(error);
-      setCommentary("AI 辅导员暂时掉线了。");
+      setCommentary("辅导员去开会了，暂时没空理你。");
     } finally {
       setIsLoadingCommentary(false);
       setTurn(prev => prev + 1);
     }
   };
 
-  // --- TTS Feature ---
-  const handleSpeakCommentary = async () => {
-    if (isAudioPlaying || !commentary) return;
-    setIsAudioPlaying(true);
-    try {
-      const base64Audio = await generateSpeech(commentary);
-      const audioBytes = decodeBase64(base64Audio);
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      const audioBuffer = await decodeAudioData(audioBytes, ctx, 24000, 1);
-      
-      const source = ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(ctx.destination);
-      source.onended = () => setIsAudioPlaying(false);
-      source.start(0);
-    } catch (e) {
-      console.error("TTS Error", e);
-      setIsAudioPlaying(false);
-    }
+  const handleManualTTS = () => {
+    speakText(commentary);
   };
 
-  // --- Live API Feature ---
-  const toggleLiveSession = async () => {
-    if (isLiveOpen) {
-      // Close Session
-      setIsLiveOpen(false);
-      setIsLiveConnected(false);
-      if (liveSessionRef.current) {
-        // Use close() on the session object if available, or simple refresh page logic for safety in prototype
-        // However, `session.close` is not standard on the promise wrapper, usually on the session object.
-        // We relies on the ref holding the session if we awaited it, or just component unmount cleanup.
-        liveSessionRef.current.then((session: any) => session.close && session.close());
-      }
-      if (outputAudioContextRef.current) {
-        outputAudioContextRef.current.close();
-        outputAudioContextRef.current = null;
-      }
-      liveAudioSourcesRef.current.forEach(s => s.stop());
-      liveAudioSourcesRef.current.clear();
-    } else {
-      // Open Session
-      setIsLiveOpen(true);
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-        nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
-
-        const sessionPromise = connectLiveSession({
-          onOpen: () => setIsLiveConnected(true),
-          onClose: () => {
-            setIsLiveConnected(false);
-            setIsLiveOpen(false);
-          },
-          onError: () => setIsLiveConnected(false),
-          onAudioData: async (base64) => {
-            if (!outputAudioContextRef.current) return;
-            
-            const ctx = outputAudioContextRef.current;
-            // Ensure smooth playback timing
-            nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
-
-            const audioBuffer = await decodeAudioData(decodeBase64(base64), ctx, 24000, 1);
-            const source = playAudioBuffer(audioBuffer, ctx, ctx.destination, nextStartTimeRef.current);
-            
-            liveAudioSourcesRef.current.add(source);
-            source.onended = () => liveAudioSourcesRef.current.delete(source);
-            
-            nextStartTimeRef.current += audioBuffer.duration;
-          }
-        }, `当前周次: ${turn}. 状态: ${JSON.stringify(stats)}. 最近行动: ${history.slice(-1)[0] || '无'}.`, stream);
-        
-        liveSessionRef.current = sessionPromise;
-      } catch (err) {
-        console.error("Failed to start live session", err);
-        setIsLiveOpen(false);
-        alert("无法访问麦克风或 API Key 无效。");
-      }
-    }
+  const handleGetAdvice = async () => {
+    setIsAdviceOpen(true);
+    setAdviceText("正在思考...");
+    const text = await getCounselorAdvice();
+    setAdviceText(text);
   };
 
   // --- UI Components ---
@@ -183,6 +119,42 @@ const App: React.FC = () => {
           className={`h-full transition-all duration-500 ${color}`} 
           style={{ width: `${value}%` }}
         />
+      </div>
+    </div>
+  );
+
+  const SettingsModal = () => (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-sm">
+      <div className="bg-slate-800 p-6 rounded-2xl w-80 shadow-2xl border border-slate-700">
+        <h2 className="text-xl font-bold mb-6 text-white flex items-center gap-2">
+          ⚙️ 游戏设置
+        </h2>
+        
+        <div className="space-y-4 mb-8">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-300">自动播放语音</span>
+            <button 
+              onClick={() => setSettings(s => ({ ...s, autoPlayTTS: !s.autoPlayTTS }))}
+              className={`w-12 h-6 rounded-full p-1 transition-colors ${settings.autoPlayTTS ? 'bg-indigo-500' : 'bg-slate-600'}`}
+            >
+              <div className={`w-4 h-4 bg-white rounded-full transition-transform ${settings.autoPlayTTS ? 'translate-x-6' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        <div className="text-xs text-slate-500 mb-6 bg-slate-900/50 p-3 rounded border border-slate-700">
+           <p className="mb-1 font-bold text-slate-400">关于游戏:</p>
+           本游戏现已完全本地化，无需联网 API 即可畅玩。
+           <br/>
+           支持 GitHub Pages / Cloudflare 部署。
+        </div>
+
+        <button 
+          onClick={() => setIsSettingsOpen(false)}
+          className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg font-bold text-white transition-colors"
+        >
+          关闭
+        </button>
       </div>
     </div>
   );
@@ -208,11 +180,19 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen max-w-md mx-auto bg-slate-950 shadow-2xl relative overflow-hidden">
+      {/* Settings Modal */}
+      {isSettingsOpen && <SettingsModal />}
+
       {/* Header Stats */}
-      <div className="p-4 bg-slate-900 border-b border-slate-800 z-10">
+      <div className="p-4 bg-slate-900 border-b border-slate-800 z-10 relative">
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-lg font-bold text-white">大学生模拟器 2025</h1>
-          <div className="text-xs font-mono text-slate-400">第 {turn}/{MAX_TURNS} 周</div>
+          <div className="flex items-center gap-3">
+             <div className="text-xs font-mono text-slate-400">第 {turn}/{MAX_TURNS} 周</div>
+             <button onClick={() => setIsSettingsOpen(true)} className="text-slate-400 hover:text-white transition-colors">
+               ⚙️
+             </button>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-x-4">
           <StatBar label="财富" value={stats.wealth} icon="💰" color="bg-emerald-500" />
@@ -228,26 +208,26 @@ const App: React.FC = () => {
         {/* Commentary Bubble */}
         <div className="mb-6 bg-indigo-900/30 border border-indigo-500/30 p-4 rounded-2xl relative">
             <div className="absolute -top-3 left-4 bg-indigo-600 text-xs px-2 py-1 rounded text-white font-bold">
-              AI 辅导员
+              辅导员
             </div>
-            <p className="text-indigo-100 text-sm leading-relaxed mt-2">
+            <p className="text-indigo-100 text-sm leading-relaxed mt-2 min-h-[3rem]">
               {isLoadingCommentary ? (
-                <span className="animate-pulse">思考中...</span>
+                <span className="animate-pulse">正在批改作业...</span>
               ) : commentary}
             </p>
             
-            {/* Grounding Sources */}
+            {/* Grounding Sources (Mocked) */}
             {!isLoadingCommentary && groundingChunks.length > 0 && (
               <div className="mt-3 pt-3 border-t border-indigo-500/20">
-                <p className="text-xs text-slate-400 mb-1">来源:</p>
+                <p className="text-xs text-slate-400 mb-1">相关资讯:</p>
                 <div className="flex flex-wrap gap-2">
                   {groundingChunks.map((chunk, i) => chunk.web && (
                     <a 
                       key={i} 
                       href={chunk.web.uri} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="text-xs text-indigo-400 hover:underline truncate max-w-full flex items-center gap-1"
+                      className="text-xs text-indigo-400 hover:underline truncate max-w-full flex items-center gap-1 cursor-pointer"
+                      onClick={(e) => e.preventDefault()} // 阻止跳转，因为是假链接
+                      title="模拟链接"
                     >
                       🔗 {chunk.web.title}
                     </a>
@@ -259,9 +239,9 @@ const App: React.FC = () => {
             {/* TTS Button */}
             {!isLoadingCommentary && (
               <button 
-                onClick={handleSpeakCommentary}
-                disabled={isAudioPlaying}
-                className={`absolute bottom-2 right-2 p-2 rounded-full ${isAudioPlaying ? 'bg-indigo-500 text-white animate-pulse' : 'text-indigo-400 hover:bg-indigo-800/50'}`}
+                onClick={handleManualTTS}
+                className={`absolute bottom-2 right-2 p-2 rounded-full text-indigo-400 hover:bg-indigo-800/50`}
+                title="播放语音"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" />
@@ -313,16 +293,13 @@ const App: React.FC = () => {
       {/* Bottom Actions */}
       <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-slate-950 via-slate-950 to-transparent z-20 flex items-center justify-between gap-4">
          <button 
-           onClick={toggleLiveSession}
+           onClick={handleGetAdvice}
            className={`
-             p-4 rounded-full shadow-lg transition-all
-             ${isLiveOpen ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-slate-800 hover:bg-slate-700 border border-slate-600'}
+             p-4 rounded-full shadow-lg transition-all bg-yellow-600 hover:bg-yellow-500 text-white
            `}
-           title="咨询学业导师"
+           title="辅导员锦囊"
          >
-           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-white">
-             <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
-           </svg>
+           💡
          </button>
 
          <button
@@ -339,37 +316,26 @@ const App: React.FC = () => {
          </button>
       </div>
 
-      {/* Live Session Overlay */}
-      {isLiveOpen && (
-        <div className="absolute bottom-24 left-4 bg-slate-800 p-4 rounded-xl border border-slate-600 shadow-2xl w-64 z-30 animate-fade-in-up">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-bold text-white">学业导师</h3>
-            <div className={`w-2 h-2 rounded-full ${isLiveConnected ? 'bg-green-500' : 'bg-yellow-500 animate-ping'}`} />
-          </div>
-          <p className="text-xs text-slate-400 mb-3">
-            {isLiveConnected ? "正在听... 请提问！" : "正在连接导师..."}
-          </p>
-          <div className="h-8 flex items-center justify-center gap-1">
-             {[1,2,3,4,5].map(i => (
-               <div 
-                 key={i} 
-                 className={`w-1 bg-indigo-400 rounded-full transition-all duration-75 ${isLiveConnected ? 'animate-music-bar' : 'h-1'}`}
-                 style={{ height: isLiveConnected ? `${Math.random() * 20 + 4}px` : '4px', animationDelay: `${i * 0.1}s` }} 
-               />
-             ))}
-          </div>
+      {/* Advice Overlay */}
+      {isAdviceOpen && (
+        <div className="fixed inset-0 bg-black/60 z-40 flex items-end justify-center p-4" onClick={() => setIsAdviceOpen(false)}>
+           <div className="bg-slate-800 w-full max-w-md p-6 rounded-t-2xl shadow-2xl animate-fade-in-up" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-4">
+                 <h3 className="font-bold text-lg text-yellow-400 flex items-center gap-2">💡 辅导员锦囊</h3>
+                 <button onClick={() => setIsAdviceOpen(false)} className="text-slate-400">✕</button>
+              </div>
+              <p className="text-white text-lg leading-relaxed mb-6">
+                 {adviceText}
+              </p>
+              <button 
+                onClick={() => setIsAdviceOpen(false)}
+                className="w-full py-3 bg-slate-700 rounded-xl font-bold text-white"
+              >
+                收到了
+              </button>
+           </div>
         </div>
       )}
-      
-      <style>{`
-        @keyframes music-bar {
-          0%, 100% { height: 4px; }
-          50% { height: 24px; }
-        }
-        .animate-music-bar {
-          animation: music-bar 0.5s infinite ease-in-out;
-        }
-      `}</style>
     </div>
   );
 };

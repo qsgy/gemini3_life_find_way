@@ -21,7 +21,7 @@ export interface GameState {
   stats: PlayerStats;
   hand: CardData[];
   selectedCardIds: string[];
-  history: string[]; // Log of actions taken
+  history: string[]; 
   isGameOver: boolean;
 }
 
@@ -35,12 +35,14 @@ export interface GroundingChunk {
 export interface AICommentaryResult {
   text: string;
   groundingChunks?: GroundingChunk[];
-  audioData?: string; // Base64
 }
 
-export interface LiveSessionConfig {
-  onOpen: () => void;
-  onAudioData: (base64: string) => void;
-  onClose: () => void;
-  onError: (error: any) => void;
+export interface AppSettings {
+  autoPlayTTS: boolean;
+  soundEffects: boolean;
+}
+
+export interface CommentaryTemplate {
+  condition: (stats: PlayerStats, playedCards: CardData[]) => boolean;
+  lines: string[];
 }
