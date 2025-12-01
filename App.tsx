@@ -9,7 +9,6 @@ const App: React.FC = () => {
   const [stats, setStats] = useState<PlayerStats>(INITIAL_STATS);
   const [hand, setHand] = useState<CardData[]>([]);
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
-  const [history, setHistory] = useState<string[]>([]);
   const [isGameOver, setIsGameOver] = useState(false);
 
   // --- Settings State ---
@@ -75,15 +74,15 @@ const App: React.FC = () => {
     });
 
     setStats(newStats);
-    setHistory(prev => [...prev, `第 ${turn} 周: ${playedCards.map(c => c.title).join(', ')}`]);
+    // Removed history setting to avoid TS unused variable error
 
     // Generate Commentary (Local)
     setIsLoadingCommentary(true);
-    // setCommentary("辅导员正在观察你..."); // 移除这个中间状态，减少闪烁感
     setGroundingChunks([]);
     
     try {
-      const result = await generateTurnCommentary(playedCards, newStats, turn);
+      // Removed 'turn' argument as it is not used in the service function
+      const result = await generateTurnCommentary(playedCards, newStats);
       setCommentary(result.text);
       setGroundingChunks(result.groundingChunks || []);
     } catch (error) {
@@ -143,7 +142,7 @@ const App: React.FC = () => {
         </div>
 
         <div className="text-xs text-slate-500 mb-6 bg-slate-900/50 p-3 rounded border border-slate-700">
-           <p className="mb-1 font-bold text-slate-400">关于游戏:</p>
+           <p className="mb-1 font-bold text-slate400">关于游戏:</p>
            本游戏现已完全本地化，无需联网 API 即可畅玩。
            <br/>
            支持 GitHub Pages / Cloudflare 部署。

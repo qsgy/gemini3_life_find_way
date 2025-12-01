@@ -4,8 +4,8 @@ import { COMMENTARY_TEMPLATES, ADVICE_DB } from "../constants";
 // 本地生成解说（替代 AI）
 export const generateTurnCommentary = async (
   playedCards: CardData[],
-  currentStats: PlayerStats,
-  turn: number
+  currentStats: PlayerStats
+  // Removed unused 'turn' parameter
 ): Promise<AICommentaryResult> => {
   
   // 模拟网络延迟，让体验更真实
